@@ -1,0 +1,7 @@
+streak_id,shotid,mjd_shot,spacetrack_norad,spacetrack_perp_arcsec,satchecker_norad,satchecker_name,satchecker_perp_arcsec,satchecker_pa_diff_deg,satchecker_n_returned,verdict
+229,20220104011,59583.12109375,-1,nan,-1,,nan,nan,14,not-found
+244,20220305025,59643.45703125,-1,nan,-1,,nan,nan,10,not-found
+286,20220531019,59730.28125,-1,nan,-1,,nan,nan,5,not-found
+400,20230717009,60142.171875,-1,nan,53200,STARLINK-4417,80.99086910622759,0.26227260621888604,18,found
+140,20210117027,59231.44140625,-1,nan,-1,,nan,nan,8,not-found
+402,20230717011,60142.203125,-1,nan,48988,ONEWEB-0270,16.851623988560505,0.05434676133637595,12,found
