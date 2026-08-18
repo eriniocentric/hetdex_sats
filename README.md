@@ -7,13 +7,13 @@ datacubes via the pipeline `SAT` mask, aggregate the masked spaxels per shot,
 separate distinct passes using the known satellite-track catalog, and build a
 value-added catalog of streak spectra and geometry (`intermediate/HETDEX_PDR1_sats.fits`),
 then cross-match each streak against archival TLEs to produce the final
-identified catalog `HETDEX_PDR1_satellites.fits` (527 streaks, 446 identified).
+identified catalog `HETDEX_PDR1_satellites.fits` (527 streaks, 468 identified).
 
 ## Contents
 
 | Path | Description |
 |------|-------------|
-| `HETDEX_PDR1_satellites.fits` | **Final publication catalog**: 527 streaks, 446 identified, with spectra and CANDIDATES HDUs. |
+| `HETDEX_PDR1_satellites.fits` | **Final publication catalog**: 527 streaks, 468 identified, with spectra and CANDIDATES HDUs. |
 | `HETDEX_PDR1_satellites.txt` | AAS machine-readable text (MRT format). |
 | `HETDEX_PDR1_satellites.csv` | Plain CSV. |
 | `crossmatch_and_make_catalog.ipynb` | SGP4 identification pipeline — fetches TLEs, matches all 527 streaks, writes the three files above. **Run this to reproduce.** |
@@ -47,7 +47,9 @@ written to the repo root by `crossmatch_and_make_catalog.ipynb`.
 | `fetch_tles.py` | Space-Track `gp_history` downloader and TLE cache manager. |
 | `satchecker_crosscheck.py` | Independent validation via IAU CPS SatChecker API. |
 | `test_geometry.py` | 82 offline unit tests (~1 s): `python test_geometry.py`. |
-| `CLAUDE.md` | Detailed technical context for the pipeline (LLM-readable). |
+
+Technical context for the whole repo, including this pipeline, is in the
+top-level `CLAUDE.md`.
 
 **Prerequisites:**
 ```
@@ -66,9 +68,31 @@ The TLE cache (`crossmatch/tle_cache/`, ~1.5 GB) is not included in this
 repository (Space-Track redistribution terms). It is populated automatically
 when you run `crossmatch_and_make_catalog.ipynb` with valid credentials.
 
-**Output:** `HETDEX_PDR1_satellites.fits` (repo root) — 527 streaks, 446
-identified (84.6%). Contains the publication table plus WAVE/SPECTRA/ERRORS
-and CANDIDATES HDUs, so it is fully self-contained.
+**Output:** `HETDEX_PDR1_satellites.fits` (repo root) — 527 streaks, 468
+identified (88.8%): 462 via Space-Track SGP4 propagation and 6 via SatChecker,
+distinguished by the `IDsrc` column. Contains the publication table plus
+WAVE/SPECTRA/ERRORS and CANDIDATES HDUs, so it is fully self-contained.
+
+Summary of the identifications:
+
+| | |
+|---|---|
+| identified | 468 / 527 (88.8%) |
+| unambiguous | 463 / 468 (98.9%) |
+| median cross-track residual | 14.0″ (90th pct 71.7″) |
+| median PA residual | 0.08° (90th pct 0.59°) |
+| umbra false-positive floor | 6 (1.3%) |
+| object type | 254 payload, 166 rocket body, 48 debris |
+| orbit class | 191 LEO, 64 MEO, 97 GEO, 116 HEO |
+| constellation | 34 Starlink, 50 Cosmos, 21 OneWeb, 15 Globalstar |
+
+**Search window.** Each shot is searched over
+`[mjd_shot − 60 s, mjd_shot + T_shot + 60 s]` where
+`T_shot = 3 × exptime + 240 s` — three dithers plus ~4 min of overhead.
+`T_shot` must be evaluated per shot: `exptime` varies 366.9–728.0 s, so the
+window ranges from 1341 s at the median exposure to 2423 s at the longest.
+This is `MatchConfig.overhead_s` (240 s) with `exposure_span_s = None`;
+setting `exposure_span_s` overrides the formula with a fixed span.
 
 ---
 
