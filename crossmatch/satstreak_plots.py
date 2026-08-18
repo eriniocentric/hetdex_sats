@@ -800,6 +800,15 @@ def plot_pa_histogram(pa_deg, orbit_class=None, bins=18,
                         fontsize=6, rotation=90, va="top", ha="left",
                         color="0.3")
 
+    # GEO belt: apparent track is inclined to the equator by the orbital
+    # inclination, so PA ~ 90 - i.  Median GEO-class inclination is ~14 deg.
+    _geo_pa = 90.0 - 14.0
+    ax.axvline(_geo_pa, color="0.3", ls="-.", lw=0.9, zorder=5)
+    ax.annotate(r"GEO $90\degree-i$", xy=(_geo_pa, 1.0),
+                xycoords=("data", "axes fraction"),
+                xytext=(2, -2), textcoords="offset points",
+                fontsize=6, rotation=90, va="top", ha="left", color="0.3")
+    
     ax.set_xlim(0, 180)
     ax.set_xticks([0, 45, 90, 135, 180])
     ax.set_xlabel(r"Streak position angle [$^{\circ}$E of N]")
