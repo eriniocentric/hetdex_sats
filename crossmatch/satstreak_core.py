@@ -276,8 +276,9 @@ class MatchConfig:
                  sigma_pa_deg=1.5,
                  margin_before_s=60.0,
                  margin_after_s=60.0,
-                 exposure_span_s=1320.0,
+                 exposure_span_s=None,
                  n_dither=3,
+                 overhead_s=240.0,
                  min_altitude_deg=0.0,
                  require_sunlit=False,
                  keep_n_candidates=5,
@@ -306,6 +307,7 @@ class MatchConfig:
         # to reconstruct the shot span reliably.
         self.exposure_span_s = exposure_span_s
         self.n_dither = n_dither
+        self.overhead_s = overhead_s
         self.min_altitude_deg = min_altitude_deg
         self.require_sunlit = require_sunlit
         self.keep_n_candidates = keep_n_candidates
@@ -328,7 +330,7 @@ class MatchConfig:
         0-1320 s range rather than clustering at an edge.
         """
         span = (self.exposure_span_s if self.exposure_span_s
-                else self.n_dither * exptime_s)
+                else self.n_dither * exptime_s + self.overhead_s)
         return (mjd_shot - self.margin_before_s / 86400.0,
                 mjd_shot + (span + self.margin_after_s) / 86400.0)
 
