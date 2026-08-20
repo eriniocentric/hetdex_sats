@@ -25,6 +25,7 @@ hetdex_sats/
 ├── satellite_streak_analysis.ipynb  # Trend figures (mag, SB, PA rose, monthly fraction)
 ├── satellite_streak_figure.ipynb    # Individual-streak publication figures
 ├── paper_figures_combined.ipynb     # Combined multi-panel figures
+├── streak_counts_over_time.ipynb    # Cadence investigation: raw counts vs shots/bin → rates
 ├── satellite_tracks.txt             # Per-shot track lines (shotid expnum slope intercept)
 ├── sunset_cache*.fits               # Cached twilight times per observing night
 ├── gcat_satcat.tsv                  # GCAT active-satellite count (J. McDowell)
@@ -466,16 +467,43 @@ Run from the **repo root** after `crossmatch_and_make_catalog.ipynb`.
 ```python
 CATALOG     = "HETDEX_PDR1_satellites.fits"   # single input
 FIGURES_DIR = "figures/"                       # publication figures go here
-# Diagnostic gallery goes to: GALLERY_DIR = "crossmatch/trend_plots"
+# Diagnostic gallery goes to: GALLERY_DIR = "crossmatch_diagnostic_figures/"
 
 # The notebook builds match_full from pub (the pub table) via a column rename map
 # so it does NOT need the intermediate HETDEX_PDR1_sats_matched.fits
 ```
 
+**ifu-index dependency.** The notebook loads the HETDEX PDR1 `ifu-index.fits` to compute
+the number of survey shots in each time bin, which is used to overlay cadence-corrected
+LEO and GEO streak rates (streaks/shot) on the middle-left panel of
+`crossmatch_summary_panel.png`. The cell searches three paths in order:
+1. `../../../ifu-index.fits` (relative to the catalog, works on this JupyterHub)
+2. `/home/jovyan/Hobby-Eberly-Public/HETDEX/pdr/pdr1/ifu-index.fits` (JupyterHub mount)
+3. `/home/jovyan/work/pdr1/ifu-index.fits` (Docker/local download)
+
 Key figures written to `figures/`:
 - `match_summary_panel.png`
 - `orbit_class_spectra.png`
-- `full_summary_panel.png`
+- `crossmatch_summary_panel.png` — five-panel figure; middle-left panel now includes
+  dashed/dotted rate overlays (LEO and GEO streaks/shot, right axis) using the ifu-index
+  shot counts as the denominator.
+
+**Rate overlay API** (`satstreak_plots.py`):
+
+```python
+# plot_orbit_class_counts gains two optional parameters:
+plot_orbit_class_counts(mjd, orbit_class, bins=12, ax=None,
+                        shot_mjd=None,            # MJD of all survey shots
+                        rate_classes=("LEO","GEO"))  # which classes to plot rates for
+
+# full_summary_panel passes it through:
+full_summary_panel(match, pub, catalog, smooth=5, figsize=None,
+                   shot_mjd=None)
+```
+
+When `shot_mjd` is provided, the function histograms the shots into the same bins as the
+streaks and plots `streaks[c] / shots_per_bin` on a twin right y-axis with `alpha=0.7`,
+no markers, and a stacked vertical legend at the top centre of the panel.
 
 ---
 
@@ -774,9 +802,13 @@ that may have diverged; patch the specific change, or diff first.
 
 1. ~~Fetch the missing 71 nights.~~ **Done.** All 370 nights are cached;
    `cache_coverage` reports 0 missing.
-2. **`SHOTS_PER_BIN`** in `orbit_class_analysis.ipynb` §3 — counts are not
-   rates without a shot denominator, and PDR1's cadence is uneven. Monthly
-   contamination fractions computed elsewhere should slot in.
+2. ~~**`SHOTS_PER_BIN`** — counts are not rates without a shot denominator.~~ **Done.**
+   `crossmatch_figures.ipynb` now loads `ifu-index.fits`, computes unique shots per
+   time bin, and overlays cadence-corrected LEO and GEO rates (streaks/shot) on the
+   middle-left panel via `plot_orbit_class_counts(shot_mjd=...)`. The full investigation
+   is in `streak_counts_over_time.ipynb`. Key result: LEO rate rises ~20× from 2018
+   to 2024 (real constellation growth); GEO variation is Poisson noise
+   (r = 0.29, p = 0.35 vs cadence).
 3. ~~Verify `g_mag_inst`.~~ **Resolved 2026-08-13.** It was normalizing by the
    per-row `exptime` catalog column (366.9–728.0 s), but Erin confirmed HETDEX
    flux calibration is referenced to a fixed 360 s exposure regardless of the

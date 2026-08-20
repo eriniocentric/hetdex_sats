@@ -17,7 +17,8 @@ identified catalog `HETDEX_PDR1_satellites.fits` (527 streaks, 468 identified).
 | `HETDEX_PDR1_satellites.txt` | AAS machine-readable text (MRT format). |
 | `HETDEX_PDR1_satellites.csv` | Plain CSV. |
 | `crossmatch_and_make_catalog.ipynb` | SGP4 identification pipeline — fetches TLEs, matches all 527 streaks, writes the three files above. **Run this to reproduce.** |
-| `crossmatch_figures.ipynb` | Publication figures and match gallery from `HETDEX_PDR1_satellites.fits`. |
+| `crossmatch_figures.ipynb` | Publication figures and match gallery from `HETDEX_PDR1_satellites.fits`. Loads the HETDEX ifu-index to compute cadence-corrected LEO/GEO streak rates overlaid on the counts panel. |
+| `streak_counts_over_time.ipynb` | Cadence investigation: compares raw streak counts per orbit class to survey shot density, showing LEO rate rises ~20× from 2018–2024 (real constellation growth) while GEO variation is Poisson noise. |
 | `intermediate/` | Input streak catalog `HETDEX_PDR1_sats.fits` and its documentation. |
 | `crossmatch/` | Pipeline modules and diagnostic notebooks (see below). |
 | `figures/` | Final paper figures (written by `crossmatch_figures.ipynb`). |
@@ -64,6 +65,9 @@ password = yourpassword
 ```
 
 **Run order:** `crossmatch_and_make_catalog.ipynb` (repo root) → `crossmatch_figures.ipynb`.
+`crossmatch_figures.ipynb` also requires the HETDEX PDR1 ifu-index (`ifu-index.fits`) to compute
+the cadence-corrected rate overlay on the counts panel; it searches the standard PDR1 paths
+automatically.
 The TLE cache (`crossmatch/tle_cache/`, ~1.5 GB) is not included in this
 repository (Space-Track redistribution terms). It is populated automatically
 when you run `crossmatch_and_make_catalog.ipynb` with valid credentials.
@@ -72,6 +76,14 @@ when you run `crossmatch_and_make_catalog.ipynb` with valid credentials.
 identified (88.8%): 462 via Space-Track SGP4 propagation and 6 via SatChecker,
 distinguished by the `IDsrc` column. Contains the publication table plus
 WAVE/SPECTRA/ERRORS and CANDIDATES HDUs, so it is fully self-contained.
+
+Key figure: `figures/crossmatch_summary_panel.png` — five-panel publication figure comprising
+normalised stacked spectra by orbit class (top), streak counts and cadence-corrected LEO/GEO
+rates over time (middle left), orbital altitude distribution (middle right), position angle
+histogram (bottom left), and instantaneous magnitude vs slant range (bottom right). The LEO
+detection rate increases by a factor of ~20 between 2018 and 2024 after correcting for survey
+cadence, reflecting the growth of large LEO constellations. The GEO variation is consistent
+with Poisson noise given the small per-bin sample size (~8 detections per bin).
 
 Summary of the identifications:
 
