@@ -513,11 +513,21 @@ def orbit_class_table(mjd, orbit_class, by="year"):
         for c in present))
 
 
-def plot_orbit_class_counts(mjd, orbit_class, bins=12, ax=None):
+def plot_orbit_class_counts(mjd, orbit_class, bins=12, ax=None,
+                            shot_mjd=None, rate_classes=("LEO", "GEO")):
     """Grouped (side-by-side) histogram of matched streaks by orbit class.
 
     Each MJD bin has one bar per orbit class placed next to each other,
     so classes are directly comparable without decoding a stack.
+
+    Parameters
+    ----------
+    shot_mjd : array-like, optional
+        MJD of every survey shot (not just ones with streaks).  When supplied,
+        dashed rate lines (streaks per shot) are overlaid on a twin y-axis for
+        the classes listed in `rate_classes`.
+    rate_classes : sequence of str
+        Which orbit classes to draw rate lines for (default LEO and GEO).
     """
     mjd = np.asarray(mjd, float)
     cls = as_str_array(orbit_class)
@@ -539,8 +549,10 @@ def plot_orbit_class_counts(mjd, orbit_class, bins=12, ax=None):
     n = len(present)
     bar_w = bin_w * 0.8 / n
 
+    stacks = {}
     for i, c in enumerate(present):
         counts = np.histogram(mjd[cls == c], bins=edges)[0]
+        stacks[c] = counts
         offset = (i - (n - 1) / 2) * bar_w
         ax.bar(centres + offset, counts, width=bar_w,
                color=ORBIT_CLASS_COLORS.get(c, "#cccccc"), label=c,
@@ -548,11 +560,36 @@ def plot_orbit_class_counts(mjd, orbit_class, bins=12, ax=None):
 
     ax.set_xlabel("MJD")
     ax.set_ylabel("Streaks")
-    ax.legend(frameon=False, ncol=1, fontsize=8, loc="upper left")
+    ax.legend(frameon=False, ncol=1, fontsize=7, loc="upper left")
 
     sec = ax.secondary_xaxis("top", functions=(mjd_to_year, year_to_mjd))
-    sec.set_xlabel("Year", fontsize=6)
-    sec.tick_params(labelsize=6)
+    sec.set_xlabel("Year", fontsize=7)
+    sec.tick_params(labelsize=7)
+
+    # --- optional rate overlay ---
+    if shot_mjd is not None:
+        shot_mjd = np.asarray(shot_mjd, float)
+        shot_mjd = shot_mjd[np.isfinite(shot_mjd)]
+        shots_per_bin, _ = np.histogram(shot_mjd, bins=edges)
+        scale = np.where(shots_per_bin > 0, shots_per_bin.astype(float), np.nan)
+
+        ax2 = ax.twinx()
+        rate_line_styles = ["--", ":"]
+        for j, c in enumerate(rate_classes):
+            if c not in stacks:
+                continue
+            rate = stacks[c] / scale
+            ls = rate_line_styles[j % len(rate_line_styles)]
+            ax2.plot(centres, rate,
+                     color=ORBIT_CLASS_COLORS.get(c, "#cccccc"),
+                     ls=ls, lw=1.2, alpha=0.7,
+                     label=f"{c} rate")
+        ax2.set_ylabel("Streaks/shot", fontsize=7)
+        ax2.tick_params(axis="y", labelsize=6)
+        ax2.yaxis.set_label_position("right")
+        ax2.legend(frameon=False, fontsize=7, loc="upper center",
+                   bbox_to_anchor=(0.5, 1.0), ncol=1)
+
     return fig
 
 
@@ -593,7 +630,7 @@ def plot_orbit_distribution(sat_height_km, orbit_class=None, ax=None):
             ax.bar(cen, counts, width=bw,
                    color=ORBIT_CLASS_COLORS.get(c, "#cccccc"),
                    edgecolor="none", label=c)
-        ax.legend(frameon=False, ncol=1, fontsize=6, loc="upper right")
+        ax.legend(frameon=False, ncol=1, fontsize=7, loc="upper right")
     else:
         ax.hist(h_all, bins=log_bins, color="0.35", lw=0)
 
@@ -804,14 +841,14 @@ def plot_pa_histogram(pa_deg, orbit_class=None, bins=18,
     # inclination, so PA ~ 90 - i.  Median GEO-class inclination is ~14 deg.
     _geo_pa = 90.0 - 14.0
     ax.axvline(_geo_pa, color="0.3", ls="-.", lw=0.9, zorder=5)
-    ax.annotate(r"GEO $90\degree-i$", xy=(_geo_pa, 1.0),
+    ax.annotate(r"GEO $90^\circ - i$", xy=(_geo_pa, 1.0),
                 xycoords=("data", "axes fraction"),
                 xytext=(2, -2), textcoords="offset points",
                 fontsize=6, rotation=90, va="top", ha="left", color="0.3")
     
     ax.set_xlim(0, 180)
     ax.set_xticks([0, 45, 90, 135, 180])
-    ax.set_xlabel(r"Streak position angle [$^{\circ}$E of N]")
+    ax.set_xlabel(r"Streak position angle [$^{\circ}$ E of N]")
     ax.set_ylabel("Streaks")
     return fig
 
@@ -840,7 +877,7 @@ def plot_magnitude_vs_range(range_km, g_mag_inst, constellation=None,
             k = con == lab
             ax.plot(r[k], m[k], ".", ms=3, alpha=0.8, label=lab,
                     color=cmap.get(lab, "#cccccc"))
-        ax.legend(frameon=False, ncol=1, fontsize=6, loc="upper left")
+        ax.legend(frameon=False, ncol=1, fontsize=7, loc="upper left")
     else:
         ax.plot(r, m, ".", ms=3, color="0.35", alpha=0.8)
 
@@ -961,7 +998,7 @@ def plot_orbit_spectra(pub, catalog, smooth=5, figsize=None):
                             color=c, alpha=0.18, lw=0)
 
     ax.set_xlabel(r"Observed wavelength [$\AA$]")
-    ax.set_ylabel("Normalised flux")
+    ax.set_ylabel("Normalized flux")
     ax.set_xlim(3500, 5500)
     ax.legend(frameon=False, fontsize=7, ncol=1, loc="lower right")
     S.mark_fraunhofer(ax)
@@ -970,7 +1007,8 @@ def plot_orbit_spectra(pub, catalog, smooth=5, figsize=None):
     return fig
 
 
-def full_summary_panel(match, pub, catalog, smooth=5, figsize=None):
+def full_summary_panel(match, pub, catalog, smooth=5, figsize=None,
+                       shot_mjd=None):
     """Combined figure: normalised spectra by orbit class (top, full width)
     above the four-panel summary (counts, altitude, PA, magnitude).
 
@@ -990,14 +1028,17 @@ def full_summary_panel(match, pub, catalog, smooth=5, figsize=None):
         Boxcar smoothing width in pixels for the spectra (default 5, ~10 AA).
     figsize : tuple, optional
         Defaults to (TWO_COL, 8.0).
+    shot_mjd : array-like, optional
+        MJD of every survey shot.  When supplied, dashed LEO and GEO rate
+        lines (streaks per shot) are overlaid on the middle-left counts panel.
     """
     import satstreak_spectra as S
     from matplotlib.gridspec import GridSpec
 
-    fig = plt.figure(figsize=figsize or (TWO_COL, 8.0))
+    fig = plt.figure(figsize=figsize or (TWO_COL, 7.4))
     gs = GridSpec(3, 2, figure=fig,
-                  height_ratios=[1.2, 1.0, 1.3],
-                  hspace=0.38, wspace=0.28)
+                  height_ratios=[1.1, 1.0, 1.2],
+                  hspace=0.30, wspace=0.30)
 
     ax_sp = fig.add_subplot(gs[0, :])   # spectrum — full width
     ax00  = fig.add_subplot(gs[1, 0])   # counts vs time
@@ -1048,14 +1089,14 @@ def full_summary_panel(match, pub, catalog, smooth=5, figsize=None):
                                color=c, alpha=0.18, lw=0)
 
     ax_sp.set_xlabel(r"Observed wavelength [$\AA$]")
-    ax_sp.set_ylabel("Normalised flux")
+    ax_sp.set_ylabel("Normalized flux")
     ax_sp.set_xlim(3500, 5500)
-    ax_sp.legend(frameon=False, fontsize=6, ncol=2, loc="lower right")
+    ax_sp.legend(frameon=False, fontsize=7, ncol=2, loc="lower right")
     S.mark_fraunhofer(ax_sp)
 
     # ------------------------------------------------------------ four panels
     oc = match["orbit_class"]
-    plot_orbit_class_counts(match["crossing_mjd"], oc, ax=ax00)
+    plot_orbit_class_counts(match["crossing_mjd"], oc, ax=ax00, shot_mjd=shot_mjd)
     plot_orbit_distribution(match["sat_height_km"], orbit_class=oc, ax=ax01)
 
     try:
@@ -1073,4 +1114,6 @@ def full_summary_panel(match, pub, catalog, smooth=5, figsize=None):
         if leg is not None:
             leg.remove()
 
+    fig.subplots_adjust(left=0.09, right=0.93, top=0.94, bottom=0.07,
+                        hspace=0.30, wspace=0.30)
     return fig
