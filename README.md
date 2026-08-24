@@ -18,7 +18,7 @@ identified catalog `HETDEX_PDR1_satellites.fits` (527 streaks, 468 identified).
 | `HETDEX_PDR1_satellites.csv` | Plain CSV. |
 | `crossmatch_and_make_catalog.ipynb` | SGP4 identification pipeline — fetches TLEs, matches all 527 streaks, writes the three files above. **Run this to reproduce.** |
 | `crossmatch_figures.ipynb` | Publication figures and match gallery from `HETDEX_PDR1_satellites.fits`. Loads the HETDEX ifu-index to compute cadence-corrected LEO/GEO streak rates overlaid on the counts panel. |
-| `streak_counts_over_time.ipynb` | Cadence investigation: compares raw streak counts per orbit class to survey shot density, showing LEO rate rises ~20× from 2018–2024 (real constellation growth) while GEO variation is Poisson noise. |
+| `crossmatch/streak_counts_over_time.ipynb` | Cadence investigation: compares raw streak counts per orbit class to survey shot density, showing LEO rate rises ~20× from 2018–2024 (real constellation growth) while GEO variation is Poisson noise. |
 | `intermediate/` | Input streak catalog `HETDEX_PDR1_sats.fits` and its documentation. |
 | `crossmatch/` | Pipeline modules and diagnostic notebooks (see below). |
 | `figures/` | Final paper figures (written by `crossmatch_figures.ipynb`). |

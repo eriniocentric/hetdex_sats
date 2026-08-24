@@ -997,7 +997,7 @@ def plot_orbit_spectra(pub, catalog, smooth=5, figsize=None):
                             _smooth(f - e, smooth), _smooth(f + e, smooth),
                             color=c, alpha=0.18, lw=0)
 
-    ax.set_xlabel(r"Observed wavelength [$\AA$]")
+    ax.set_xlabel("Wavelength [Å]")
     ax.set_ylabel("Normalized flux")
     ax.set_xlim(3500, 5500)
     ax.legend(frameon=False, fontsize=7, ncol=1, loc="lower right")
@@ -1088,7 +1088,7 @@ def full_summary_panel(match, pub, catalog, smooth=5, figsize=None,
                                _smooth(f - e, smooth), _smooth(f + e, smooth),
                                color=c, alpha=0.18, lw=0)
 
-    ax_sp.set_xlabel(r"Observed wavelength [$\AA$]")
+    ax_sp.set_xlabel("Wavelength [Å]")
     ax_sp.set_ylabel("Normalized flux")
     ax_sp.set_xlim(3500, 5500)
     ax_sp.legend(frameon=False, fontsize=7, ncol=2, loc="lower right")

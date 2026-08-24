@@ -27,3 +27,6 @@ test/
 # Space-Track credentials — never commit
 .spacetrack.ini
 *spacetrack*.ini
+
+#legacy images
+ls*.fits

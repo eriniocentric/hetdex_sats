@@ -25,7 +25,6 @@ hetdex_sats/
 ├── satellite_streak_analysis.ipynb  # Trend figures (mag, SB, PA rose, monthly fraction)
 ├── satellite_streak_figure.ipynb    # Individual-streak publication figures
 ├── paper_figures_combined.ipynb     # Combined multi-panel figures
-├── streak_counts_over_time.ipynb    # Cadence investigation: raw counts vs shots/bin → rates
 ├── satellite_tracks.txt             # Per-shot track lines (shotid expnum slope intercept)
 ├── sunset_cache*.fits               # Cached twilight times per observing night
 ├── gcat_satcat.tsv                  # GCAT active-satellite count (J. McDowell)
@@ -41,6 +40,7 @@ hetdex_sats/
 │   ├── satstreak_photometry.py      # Magnitude budget by orbit class
 │   ├── fetch_tles.py                # Space-Track gp_history downloader + cache manager
 │   ├── satchecker_crosscheck.py     # Independent validation via IAU CPS SatChecker API
+│   ├── streak_counts_over_time.ipynb  # Cadence investigation: raw counts vs shots/bin → rates
 │   ├── test_geometry.py             # 82 unit tests, offline (~1 s)
 │   ├── tle_cache/                   # GITIGNORED — ~1.5 GB TLE archive
 │   ├── satchecker_unmatched.csv     # GITIGNORED — SatChecker results for unmatched streaks
@@ -806,7 +806,7 @@ that may have diverged; patch the specific change, or diff first.
    `crossmatch_figures.ipynb` now loads `ifu-index.fits`, computes unique shots per
    time bin, and overlays cadence-corrected LEO and GEO rates (streaks/shot) on the
    middle-left panel via `plot_orbit_class_counts(shot_mjd=...)`. The full investigation
-   is in `streak_counts_over_time.ipynb`. Key result: LEO rate rises ~20× from 2018
+   is in `crossmatch/streak_counts_over_time.ipynb`. Key result: LEO rate rises ~20× from 2018
    to 2024 (real constellation growth); GEO variation is Poisson noise
    (r = 0.29, p = 0.35 vs cadence).
 3. ~~Verify `g_mag_inst`.~~ **Resolved 2026-08-13.** It was normalizing by the
