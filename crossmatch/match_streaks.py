@@ -76,6 +76,160 @@ from satstreak_core import MatchConfig
 MJD0 = 2400000.5
 
 
+# --------------------------------------------------------- survey timing
+def load_survey_timing(h5_path):
+    """Load precise per-dither shutter timing from survey_hdr5.h5.
+
+    Reconstructs float64-precision dither start times from the ``date`` and
+    ``time`` columns (which together give sub-second accuracy), combined with
+    ``darktime`` (wall-clock time per dither = exposure + readout) and
+    ``exptime``.  The float32 ``mjd`` column in the survey file has a
+    quantisation step of ~338 s — large enough to shift the search window past
+    a real crossing.
+
+    Returns
+    -------
+    dict : shotid (int) -> dict with keys
+        dither_open  : np.ndarray, shape (3,), float64 — MJD shutter-open
+        dither_close : np.ndarray, shape (3,), float64 — MJD shutter-close
+        fwhm_virus   : float — seeing FWHM (arcsec), NaN if unavailable
+    """
+    import tables as tb
+    from astropy.time import Time as AstTime
+
+    h5 = tb.open_file(str(h5_path), "r")
+    survey = h5.root.Survey
+    out = {}
+    for row in survey.iterrows():
+        shotid = int(row["shotid"])
+        if shotid == 0:
+            continue
+        # Precise MJD of dither-0 start from date + time
+        d = str(int(row["date"]))
+        t = row["time"]
+        t = t.decode() if isinstance(t, bytes) else str(t)
+        if len(t.strip()) < 5:
+            continue
+        hh, mm = int(t[0:2]), int(t[2:4])
+        ss_frac = float(t[4:]) / 10.0
+        iso = f"{d[:4]}-{d[4:6]}-{d[6:8]}T{hh:02d}:{mm:02d}:{ss_frac:06.3f}"
+        t0 = AstTime(iso, format="isot", scale="utc").mjd
+
+        dt = np.asarray(row["darktime"], dtype=np.float64)
+        et = np.asarray(row["exptime"], dtype=np.float64)
+
+        opens = np.empty(3, dtype=np.float64)
+        closes = np.empty(3, dtype=np.float64)
+        opens[0] = t0
+        opens[1] = t0 + dt[0] / 86400.0
+        opens[2] = t0 + (dt[0] + dt[1]) / 86400.0
+        closes[0] = opens[0] + et[0] / 86400.0
+        closes[1] = opens[1] + et[1] / 86400.0
+        closes[2] = opens[2] + et[2] / 86400.0
+
+        fwhm = float(row["fwhm_virus"])
+        if fwhm <= 0:
+            fwhm = np.nan
+        out[shotid] = dict(dither_open=opens, dither_close=closes,
+                           fwhm_virus=fwhm)
+    h5.close()
+    return out
+
+
+def apply_survey_timing(info, survey_timing, sat_tracks_path=None):
+    """Patch *info* table in-place with precise timing from the survey file.
+
+    Adds or replaces the following columns:
+
+    * ``mjd_shot``     — precise MJD of dither-0 shutter open (float64)
+    * ``dither_open``   — (N, 3) precise shutter-open MJD per dither
+    * ``dither_close``  — (N, 3) precise shutter-close MJD per dither
+    * ``expnum``        — dither number (1-3) the streak was detected in
+    * ``shot_span_s``   — total time first-open to last-close (seconds)
+
+    ``expnum`` is looked up by joining on (shotid, streak_slope,
+    streak_intercept) with satellite_tracks.txt.  Falls back to 0 (unknown)
+    for unmatched rows.
+    """
+    n = len(info)
+    d_open = np.full((n, 3), np.nan, dtype=np.float64)
+    d_close = np.full((n, 3), np.nan, dtype=np.float64)
+    shot_span = np.full(n, np.nan, dtype=np.float64)
+    fwhm = np.full(n, np.nan, dtype=np.float64)
+
+    for i, row in enumerate(info):
+        sid = int(row["shotid"])
+        st = survey_timing.get(sid)
+        if st is None:
+            continue
+        d_open[i] = st["dither_open"]
+        d_close[i] = st["dither_close"]
+        info["mjd_shot"][i] = st["dither_open"][0]
+        shot_span[i] = (st["dither_close"][2] - st["dither_open"][0]) * 86400.0
+        fwhm[i] = st.get("fwhm_virus", np.nan)
+
+    info["dither_open"] = d_open
+    info["dither_close"] = d_close
+    info["shot_span_s"] = shot_span
+    info["fwhm_virus"] = fwhm
+
+    # --- look up expnum from satellite_tracks.txt ---
+    expnum = np.zeros(n, dtype=np.int16)
+    if sat_tracks_path is not None:
+        from astropy.table import Table as AstTable
+        sat_tab = AstTable.read(str(sat_tracks_path), format="ascii",
+                                names=["shotid", "expnum", "slope", "intercept"])
+        sat_tab["shotid"] = sat_tab["shotid"].astype(np.int64)
+        for i, row in enumerate(info):
+            sid = int(row["shotid"])
+            sel = ((sat_tab["shotid"] == sid)
+                   & (np.abs(sat_tab["slope"] - float(row["streak_slope"])) < 1e-4)
+                   & (np.abs(sat_tab["intercept"]
+                             - float(row["streak_intercept"])) < 1e-4))
+            matches = sat_tab[sel]
+            if len(matches):
+                expnum[i] = int(matches["expnum"][0])
+    info["expnum"] = expnum
+
+    # Scalar MJD open/close for the specific dither each streak was detected
+    # in.  These go into the publication table (MRT cannot hold shape-3 arrays).
+    dith_open_scalar = np.full(n, np.nan, dtype=np.float64)
+    dith_close_scalar = np.full(n, np.nan, dtype=np.float64)
+    for i in range(n):
+        e = int(expnum[i])
+        if e >= 1 and np.isfinite(d_open[i, e - 1]):
+            dith_open_scalar[i] = d_open[i, e - 1]
+            dith_close_scalar[i] = d_close[i, e - 1]
+    info["dither_mjd_open"] = dith_open_scalar
+    info["dither_mjd_close"] = dith_close_scalar
+
+
+def shutter_open_grid(dither_open, dither_close, step_s, margin_s=0.0):
+    """Build a sorted time array covering only shutter-open intervals.
+
+    Parameters
+    ----------
+    dither_open, dither_close : array-like, shape (3,)
+        MJD of shutter open / close per dither.
+    step_s : float
+        Time step in seconds.
+    margin_s : float
+        Margin to add before/after each interval (seconds).
+
+    Returns
+    -------
+    mjd : np.ndarray, float64 — sorted time samples
+    """
+    margin = margin_s / 86400.0
+    parts = []
+    for d in range(3):
+        t_lo = dither_open[d] - margin
+        t_hi = dither_close[d] + margin
+        n = max(2, int(np.ceil((t_hi - t_lo) * 86400.0 / step_s)) + 1)
+        parts.append(np.linspace(t_lo, t_hi, n))
+    return np.concatenate(parts)
+
+
 # ------------------------------------------------------------- TLE handling
 def tle_epoch_to_mjd(line1):
     """Epoch of a TLE line 1 as MJD (UTC)."""
@@ -250,15 +404,27 @@ def shot_tracks(shot_rows, records, site_geodetic, cfg, norads,
     location = site_location(site_geodetic)
     mjd_shot = float(shot_rows[0]["mjd_shot"])
     exptime = float(shot_rows[0]["exptime"])
-    t_lo, t_hi = cfg.window_mjd(mjd_shot, exptime)
     step = step_s if step_s else cfg.fine_step_s
+
+    d_open = shot_rows[0].get("dither_open")
+    d_close = shot_rows[0].get("dither_close")
+    has_timing = (d_open is not None
+                  and np.all(np.isfinite(d_open))
+                  and np.all(np.isfinite(d_close)))
+    if has_timing:
+        mjd = shutter_open_grid(
+            np.asarray(d_open, np.float64),
+            np.asarray(d_close, np.float64),
+            step, margin_s=cfg.margin_before_s)
+        t_lo, t_hi = mjd[0], mjd[-1]
+    else:
+        t_lo, t_hi = cfg.window_mjd(mjd_shot, exptime)
+        n = max(8, int(np.ceil((t_hi - t_lo) * 86400.0 / step)) + 1)
+        mjd = np.linspace(t_lo, t_hi, n)
 
     satrecs, meta = build_satrecs(records, mjd_shot, norads=norads)
     if not satrecs:
         return {}
-
-    n = max(8, int(np.ceil((t_hi - t_lo) * 86400.0 / step)) + 1)
-    mjd = np.linspace(t_lo, t_hi, n)
     times = Time(mjd, format="mjd", scale="utc")
     M = teme_to_gcrs_matrix(Time(0.5 * (t_lo + t_hi), format="mjd", scale="utc"))
     obs, _sun = observer_and_sun(times, location)
@@ -284,6 +450,44 @@ def shot_tracks(shot_rows, records, site_geodetic, cfg, norads,
 
 
 # --------------------------------------------------------------- one shot
+def _shot_time_grids(shot_rows, cfg):
+    """Return (mjd_shot, t_lo, t_hi, mjd_coarse, mjd_fine).
+
+    When precise per-dither timing is available in the row dicts (from
+    ``apply_survey_timing``), the grids cover only shutter-open intervals —
+    readout gaps between dithers are excluded.  Otherwise falls back to one
+    continuous window from ``cfg.window_mjd``.
+    """
+    mjd_shot = float(shot_rows[0]["mjd_shot"])
+    exptime = float(shot_rows[0]["exptime"])
+
+    d_open = shot_rows[0].get("dither_open")
+    d_close = shot_rows[0].get("dither_close")
+    has_timing = (d_open is not None
+                  and np.all(np.isfinite(d_open))
+                  and np.all(np.isfinite(d_close)))
+
+    if has_timing:
+        d_open = np.asarray(d_open, dtype=np.float64)
+        d_close = np.asarray(d_close, dtype=np.float64)
+        mjd_coarse = shutter_open_grid(
+            d_open, d_close, cfg.coarse_step_s, margin_s=cfg.margin_before_s)
+        mjd_fine = shutter_open_grid(
+            d_open, d_close, cfg.fine_step_s, margin_s=cfg.margin_before_s)
+        t_lo = mjd_coarse[0]
+        t_hi = mjd_coarse[-1]
+    else:
+        t_lo, t_hi = cfg.window_mjd(mjd_shot, exptime)
+        n_coarse = max(4, int(np.ceil(
+            (t_hi - t_lo) * 86400.0 / cfg.coarse_step_s)) + 1)
+        mjd_coarse = np.linspace(t_lo, t_hi, n_coarse)
+        n_fine = max(8, int(np.ceil(
+            (t_hi - t_lo) * 86400.0 / cfg.fine_step_s)) + 1)
+        mjd_fine = np.linspace(t_lo, t_hi, n_fine)
+
+    return mjd_shot, t_lo, t_hi, mjd_coarse, mjd_fine
+
+
 def process_shot(shot_rows, records, site_geodetic, cfg, satcat,
                  satrec_cache=None):
     """Match every streak in one shot.  Returns a list of result dicts."""
@@ -292,17 +496,15 @@ def process_shot(shot_rows, records, site_geodetic, cfg, satcat,
     satcat = get_satcat(satcat)
     location = site_location(site_geodetic)
 
-    mjd_shot = float(shot_rows[0]["mjd_shot"])
+    mjd_shot, t_lo, t_hi, mjd_coarse, mjd_fine = _shot_time_grids(
+        shot_rows, cfg)
     exptime = float(shot_rows[0]["exptime"])
-    t_lo, t_hi = cfg.window_mjd(mjd_shot, exptime)
 
     satrecs, meta = build_satrecs(records, mjd_shot, cache=satrec_cache)
     if not satrecs:
         return []
 
     # ---- coarse pass
-    n_coarse = max(4, int(np.ceil((t_hi - t_lo) * 86400.0 / cfg.coarse_step_s)) + 1)
-    mjd_coarse = np.linspace(t_lo, t_hi, n_coarse)
     t_coarse = Time(mjd_coarse, format="mjd", scale="utc")
     M = teme_to_gcrs_matrix(Time(0.5 * (t_lo + t_hi), format="mjd", scale="utc"))
     obs_c, _sun_c = observer_and_sun(t_coarse, location)
@@ -337,8 +539,6 @@ def process_shot(shot_rows, records, site_geodetic, cfg, satcat,
         return [_no_match(row, mjd_shot, len(satrecs)) for row in shot_rows]
 
     # ---- fine pass, survivors only
-    n_fine = max(8, int(np.ceil((t_hi - t_lo) * 86400.0 / cfg.fine_step_s)) + 1)
-    mjd_fine = np.linspace(t_lo, t_hi, n_fine)
     t_fine = Time(mjd_fine, format="mjd", scale="utc")
     obs_f, sun_f = observer_and_sun(t_fine, location)
 
@@ -400,7 +600,12 @@ def process_shot(shot_rows, records, site_geodetic, cfg, satcat,
 NEEDED_COLS = ("streak_id", "shotid", "mjd_shot", "exptime",
                "ra_cen_spax", "dec_cen_spax",
                "ra_start", "dec_start", "ra_end", "dec_end",
-               "seg_len_arcsec", "streak_pa", "g_mag")
+               "seg_len_arcsec", "streak_pa", "g_mag", "area_arcsec2")
+
+# Optional columns added by apply_survey_timing; included in row dicts when
+# present but never required (backwards-compatible with old INFO tables).
+_TIMING_COLS = ("dither_open", "dither_close", "expnum", "shot_span_s",
+                "fwhm_virus")
 
 
 def run_night(path, shot_groups, site, cfg, satcat):
@@ -461,8 +666,14 @@ def _pack(row, scored, mjd_shot, exptime, n_prop, n_close, cfg, satcat):
     # `g_mag` implicitly assumes -- core.instantaneous_magnitude defaults to
     # it via HETDEX_CAL_EXPTIME_S. Using `exptime` here previously over- or
     # under-corrected m_inst by up to ~0.8 mag for streaks far from 360 s.
+    #
+    # area_arcsec2 corrects for incomplete IFU coverage along the streak:
+    # fill = area / (STREAK_WIDTH * seg_len), capped at 1.0, then
+    # t_cross = fill * seg_len / rate.  STREAK_WIDTH_ARCSEC is calibrated
+    # from the 22 single-IFU streaks (no inter-IFU gaps).
     m_inst, t_cross = core.instantaneous_magnitude(
-        row["g_mag"], row["seg_len_arcsec"], b["rate_arcsec_s"])
+        row["g_mag"], row["seg_len_arcsec"], b["rate_arcsec_s"],
+        area_arcsec2=row.get("area_arcsec2"))
 
     out.update(
         norad_id=int(b["norad"]),
@@ -589,6 +800,8 @@ def write_output(path, info, results, cfg, catalog_name=""):
                       "shot duration used for the window [s]")
     hdr["MAXTOFF"] = (getattr(cfg, "max_time_offset_s", 0.0),
                       "max along-track time offset [s]")
+    hdr["SHUTPRE"] = ("dither_open" in info.colnames,
+                      "precise per-dither shutter timing used")
     hdr["NMATCH"] = (int(t["matched"].sum()), "streaks with a match")
     hdr["NUNAMB"] = (int((t["matched"] & t["unambiguous"]).sum()),
                      "unambiguous matches")
@@ -637,15 +850,32 @@ def gather_for_plot(streak_ids, info, match_table, cand_table, cache_dir,
         if path is None:
             continue
         records = load_3le(path)
+        extra = tuple(c for c in _TIMING_COLS if c in info.colnames)
+        all_cols = NEEDED_COLS + extra
         for sid in sids:
             row = info[int(np.where(info_ids == sid)[0][0])]
-            streak = {k: (row[k].item() if hasattr(row[k], "item") else row[k])
-                      for k in NEEDED_COLS}
-            shot_rows = [
-                {k: (r[k].item() if hasattr(r[k], "item") else r[k])
-                 for k in NEEDED_COLS}
-                for r in info[np.asarray(info["shotid"]).astype(int)
-                              == int(row["shotid"])]]
+            streak = {}
+            for k in all_cols:
+                v = row[k]
+                if hasattr(v, "shape") and v.shape:
+                    streak[k] = np.asarray(v, dtype=np.float64)
+                elif hasattr(v, "item"):
+                    streak[k] = v.item()
+                else:
+                    streak[k] = v
+            shot_rows = []
+            for r in info[np.asarray(info["shotid"]).astype(int)
+                          == int(row["shotid"])]:
+                d = {}
+                for k in all_cols:
+                    v = r[k]
+                    if hasattr(v, "shape") and v.shape:
+                        d[k] = np.asarray(v, dtype=np.float64)
+                    elif hasattr(v, "item"):
+                        d[k] = v.item()
+                    else:
+                        d[k] = v
+                shot_rows.append(d)
 
             norads = [int(n) for n in
                       np.asarray(cand_table["norad_id"])[cand_ids == sid][:max_candidates]] \
@@ -921,15 +1151,34 @@ def diagnose_streak(streak_id, info, cache_dir, site, window_min=45.0,
     if len(row) == 0:
         raise ValueError(f"streak_id {streak_id} not in the catalog")
     row = row[0]
-    shot_rows = [{k: (r[k].item() if hasattr(r[k], "item") else r[k])
-                  for k in NEEDED_COLS}
-                 for r in info[np.asarray(info["shotid"]) == row["shotid"]]]
+    extra = tuple(c for c in _TIMING_COLS if c in info.colnames)
+    all_cols = NEEDED_COLS + extra
+    shot_rows = []
+    for r in info[np.asarray(info["shotid"]) == row["shotid"]]:
+        d = {}
+        for k in all_cols:
+            v = r[k]
+            if hasattr(v, "shape") and v.shape:
+                d[k] = np.asarray(v, dtype=np.float64)
+            elif hasattr(v, "item"):
+                d[k] = v.item()
+            else:
+                d[k] = v
+        shot_rows.append(d)
     target = [r for r in shot_rows if int(r["streak_id"]) == int(streak_id)]
 
     nid = int(night_id(row["mjd_shot"]))
     path = find_night_files(cache_dir).get(nid)
     print(f"streak {streak_id}  shot {row['shotid']}  night {nid}")
-    print(f"  mjd_shot {row['mjd_shot']:.6f}  exptime {row['exptime']:.1f} s")
+    print(f"  mjd_shot {row['mjd_shot']:.10f}  exptime {row['exptime']:.1f} s")
+    if "dither_open" in info.colnames and np.all(np.isfinite(row["dither_open"])):
+        d_open = np.asarray(row["dither_open"], dtype=np.float64)
+        d_close = np.asarray(row["dither_close"], dtype=np.float64)
+        for d in range(3):
+            print(f"  dither {d+1}: open={d_open[d]:.10f}  close={d_close[d]:.10f}  "
+                  f"({(d_close[d]-d_open[d])*86400:.1f}s)")
+        if "expnum" in info.colnames:
+            print(f"  streak in dither {int(row['expnum'])}")
     print(f"  field {row['ra_cen_spax']:.4f} {row['dec_cen_spax']:+.4f}")
     print(f"  TLE file: {path}")
     if path is None:
@@ -1090,8 +1339,16 @@ def rematch_by_norad(pairs, info, cache_dir, site, cfg, satcat=None,
             print(f"  streak {sid}: not in the catalog, skipped")
             continue
         row = info[int(w[0])]
-        row_d = {k: (row[k].item() if hasattr(row[k], "item") else row[k])
-                for k in NEEDED_COLS}
+        extra = tuple(c for c in _TIMING_COLS if c in info.colnames)
+        row_d = {}
+        for k in NEEDED_COLS + extra:
+            v = row[k]
+            if hasattr(v, "shape") and v.shape:
+                row_d[k] = np.asarray(v, dtype=np.float64)
+            elif hasattr(v, "item"):
+                row_d[k] = v.item()
+            else:
+                row_d[k] = v
         mjd_shot = float(row_d["mjd_shot"])
         exptime = float(row_d["exptime"])
         night = int(night_id(mjd_shot))
@@ -1128,9 +1385,22 @@ def rematch_by_norad(pairs, info, cache_dir, site, cfg, satcat=None,
                       f"night {night} ({hint}), skipped")
                 continue
 
-        t_lo, t_hi = cfg.window_mjd(mjd_shot, exptime)
-        n_fine = max(8, int(np.ceil((t_hi - t_lo) * 86400.0 / cfg.fine_step_s)) + 1)
-        mjd_fine = np.linspace(t_lo, t_hi, n_fine)
+        d_open = row_d.get("dither_open")
+        d_close = row_d.get("dither_close")
+        has_timing = (d_open is not None
+                      and np.all(np.isfinite(d_open))
+                      and np.all(np.isfinite(d_close)))
+        if has_timing:
+            mjd_fine = shutter_open_grid(
+                np.asarray(d_open, np.float64),
+                np.asarray(d_close, np.float64),
+                cfg.fine_step_s, margin_s=cfg.margin_before_s)
+            t_lo, t_hi = mjd_fine[0], mjd_fine[-1]
+        else:
+            t_lo, t_hi = cfg.window_mjd(mjd_shot, exptime)
+            n_fine = max(8, int(np.ceil(
+                (t_hi - t_lo) * 86400.0 / cfg.fine_step_s)) + 1)
+            mjd_fine = np.linspace(t_lo, t_hi, n_fine)
         t_fine = Time(mjd_fine, format="mjd", scale="utc")
         Mrot = teme_to_gcrs_matrix(Time(0.5 * (t_lo + t_hi), format="mjd", scale="utc"))
         obs_f, sun_f = observer_and_sun(t_fine, location)
@@ -1244,11 +1514,16 @@ PUB_COLUMNS = [
     ("M", "apogee_km", "Apogee", "km", "Apogee height"),
     ("M", "period_min", "Period", "min", "Orbital period"),
     ("M", "g_mag_inst", "ginst", "mag", "Instantaneous SDSS g magnitude, trail-rate corrected"),
+    ("I", "fwhm_virus", "FWHM", "arcsec", "Seeing FWHM from VIRUS guider"),
+    ("I", "expnum", "Dither", "", "Dither number (1-3) in which streak was detected"),
+    ("I", "dither_mjd_open", "MJDopen", "d", "MJD of shutter open for the streak dither (UTC)"),
+    ("I", "dither_mjd_close", "MJDclos", "d", "MJD of shutter close for the streak dither (UTC)"),
 ]
 
 
 def write_publication_table(catalog, matched, out_base="HETDEX_PDR1_sats_ids",
-                            formats=("fits", "mrt", "csv"), verbose=True):
+                            formats=("fits", "mrt", "csv"), verbose=True,
+                            info_table=None):
     """Curated streak + identification table, ready for a journal.
 
     Joins the streak catalog to the identifications, keeps a publishable subset
@@ -1260,11 +1535,19 @@ def write_publication_table(catalog, matched, out_base="HETDEX_PDR1_sats_ids",
     every column -- hence PUB_COLUMNS.  Writing it can be fussy about dtypes,
     so each format is attempted independently and a failure in one does not
     lose the others.
+
+    Parameters
+    ----------
+    info_table : astropy.table.Table, optional
+        If provided, use this in-memory INFO table instead of reading from
+        *catalog*.  This allows timing columns added by `apply_survey_timing`
+        (which patches the table in memory, not on disk) to flow through to
+        the publication output.
     """
     import astropy.units as u
     from astropy.table import Column, MaskedColumn, Table
 
-    info = Table.read(catalog, hdu="INFO")
+    info = info_table if info_table is not None else Table.read(catalog, hdu="INFO")
     match = Table.read(matched, hdu="MATCH")
     for t in (info, match):
         for c in t.colnames:
@@ -1313,11 +1596,14 @@ def write_publication_table(catalog, matched, out_base="HETDEX_PDR1_sats_ids",
         "is dominated by element-set timing error and is not used.",
     ]
 
-    # FITS uses float32 (sufficient precision, smaller file).
+    # FITS uses float32 (sufficient precision, smaller file) except for MJD
+    # columns where float32 quantisation (~338 s at MJD ~58000) loses the
+    # precise timing we just reconstructed.
     # MRT/CSV keep float64 — the MRT writer cannot format float32.
+    _keep_f64 = {"MJD", "MJDx", "MJDopen", "MJDclos"}
     out_fits = out.copy()
     for _cn in out_fits.colnames:
-        if out_fits[_cn].dtype == np.float64:
+        if out_fits[_cn].dtype == np.float64 and _cn not in _keep_f64:
             out_fits[_cn] = out_fits[_cn].astype(np.float32)
 
     written = []
@@ -1325,7 +1611,11 @@ def write_publication_table(catalog, matched, out_base="HETDEX_PDR1_sats_ids",
         path = f"{out_base}.{ {'mrt': 'txt'}.get(fmt, fmt) }"
         try:
             if fmt == "fits":
-                out_fits.write(path, overwrite=True)
+                from astropy.io import fits as _fits
+                hdu = _fits.table_to_hdu(out_fits)
+                hdu.name = "INFO"
+                _fits.HDUList([_fits.PrimaryHDU(), hdu]).writeto(
+                    path, overwrite=True)
             elif fmt == "mrt":
                 out.write(path, format="ascii.mrt", overwrite=True)
                 # astropy puts "? " at the start of the description for
@@ -1629,11 +1919,23 @@ def build_jobs(info, cache_dir, limit_nights=0, cached_only=False,
     from fetch_tles import night_id
     files = find_night_files(cache_dir)
 
+    # Include optional timing columns when present in the info table.
+    extra = tuple(c for c in _TIMING_COLS if c in info.colnames)
+    all_cols = NEEDED_COLS + extra
+
     shots = defaultdict(list)
     for row in info:
-        shots[int(row["shotid"])].append(
-            {k: (row[k].item() if hasattr(row[k], "item") else row[k])
-             for k in NEEDED_COLS})
+        d = {}
+        for k in all_cols:
+            v = row[k]
+            # numpy arrays (dither_open/close, shape-3) must stay as arrays
+            if hasattr(v, "shape") and v.shape:
+                d[k] = np.asarray(v, dtype=np.float64)
+            elif hasattr(v, "item"):
+                d[k] = v.item()
+            else:
+                d[k] = v
+        shots[int(row["shotid"])].append(d)
     nights = defaultdict(list)
     for _sid, rows in shots.items():
         nights[int(night_id(rows[0]["mjd_shot"]))].append(rows)

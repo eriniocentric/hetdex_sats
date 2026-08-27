@@ -40,6 +40,7 @@ hetdex_sats/
 │   ├── satstreak_photometry.py      # Magnitude budget by orbit class
 │   ├── fetch_tles.py                # Space-Track gp_history downloader + cache manager
 │   ├── satchecker_crosscheck.py     # Independent validation via IAU CPS SatChecker API
+│   ├── satchecker_validation.ipynb  # SatChecker validation notebook (moved from pipeline nb)
 │   ├── streak_counts_over_time.ipynb  # Cadence investigation: raw counts vs shots/bin → rates
 │   ├── test_geometry.py             # 82 unit tests, offline (~1 s)
 │   ├── tle_cache/                   # GITIGNORED — ~1.5 GB TLE archive
@@ -89,18 +90,21 @@ Final publication catalog. Written by `crossmatch_and_make_catalog.ipynb`.
 | HDU | Type | Shape | Content |
 |-----|------|-------|---------|
 | `PRIMARY` | — | — | Pipeline config header |
-| (table) | BinTable | 527 rows × 42 cols | Publication table with MRT short column names |
+| `INFO` | BinTable | 527 rows × 43 cols | Publication table with MRT short column names |
 | `WAVE` | Image | (1036,) | Wavelength grid |
 | `SPECTRA` | Image | (527, 1036) | Streak spectra |
 | `ERRORS` | Image | (527, 1036) | Propagated errors |
 | `CANDIDATES` | BinTable | ~2635 rows | Top-5 match candidates per streak |
 
-**Current contents:** 527 streaks, **468 identified (88.8%)** — 462
-`spacetrack` + 6 `satchecker` (see `IDsrc`), 59 unmatched with identification
-columns masked. 463/468 unambiguous; median cross-track residual 14.0″, median
-PA residual 0.08°; 6 matches fall in Earth's umbra (1.3% false-positive floor).
-Orbit classes: 191 LEO, 64 MEO, 97 GEO, 116 HEO. Constellations: 34 Starlink,
-50 Cosmos, 21 OneWeb, 15 Globalstar, 333 other/unaffiliated.
+**Current contents:** 527 streaks, **475 identified (90.1%)** — 468
+`spacetrack` + 7 `satchecker` (see `IDsrc`), 52 unmatched with identification
+columns masked. 471/475 unambiguous (99.2%); median cross-track residual 14.0″,
+median PA residual 0.08°.
+Orbit classes: 191 LEO, 67 MEO, 99 GEO, 118 HEO. Constellations: 34 Starlink,
+50 Cosmos, 21 OneWeb, 15 Globalstar, other/unaffiliated.
+The table HDU is named `INFO` — read with `Table.read(CATALOG, hdu="INFO")`.
+New columns (2026-08): `FWHM` (seeing), `Dither` (expnum 1–3), `MJDopen`/`MJDclos`
+(precise shutter times from `survey_hdr5.h5`), and area-corrected `ginst`.
 
 ### `HETDEX_PDR1_sats_matched.fits` (gitignored, intermediate)
 Written by the pipeline internally. Contains HDUs `INFO`, `MATCH`, `CANDIDATES`.
@@ -110,14 +114,14 @@ Not committed. The final catalog is read exclusively from `HETDEX_PDR1_satellite
 
 ## Current state
 
-**527 streaks, 468 identified (88.8%)** — see *Key files* above for the full
+**527 streaks, 475 identified (90.1%)** — see *Key files* above for the full
 breakdown. All 370 observing nights are cached; `cache_coverage` reports 0
 missing. The three subsections below record what the current numbers mean and
 how they were arrived at.
 
 ### The unmatched streaks are searched, not stranded
 
-All 59 unmatched streaks have `n_propagated > 0`. Measured against the matched
+All 52 unmatched streaks have `n_propagated > 0`. Measured against the matched
 sample they are indistinguishable in search exposure: median `n_propagated`
 ~21,000 vs ~21,400, median `n_close` ~92 vs ~100, and `n_candidates == 0` for
 every one — i.e. objects were propagated and passed the coarse filter, then
@@ -137,8 +141,8 @@ perpendicular offset past the cuts, plus some genuinely uncatalogued objects.
 formula — `3 * exptime + 240 s` — evaluated once at the nominal 360 s exposure
 and frozen. For the 40 streaks with `exptime > 600 s` the true span reaches
 2423 s, so the window covered ~57% of the shot and the match rate in that bin
-was 40% unmatched against a 13% baseline. Recovering it took **438 → 462**
-space-track matches.
+was 40% unmatched against a 13% baseline. Recovering it took **438 → 468**
+space-track matches (475 total with SatChecker).
 
 Diagnostic signature, worth recognising again: `n_close` normal, `n_candidates`
 zero, and `diagnose_streak` finding excellent geometry at `dt_s` beyond the
@@ -179,8 +183,8 @@ the repo root.
 §5b  SatChecker merge for unmatched streaks
      SC_CSV = "crossmatch/satchecker_unmatched.csv"
      (skip guard: if file already exists the query is not re-run)
-§6–§10  Diagnostics
-§11  Write publication table:
+§6–§10  Diagnostics (apply_survey_timing adds FWHM, dither MJDs from survey_hdr5.h5)
+§11  Write publication table (info_table=info passes timing-patched table):
      out_fits = "HETDEX_PDR1_satellites.fits"
      Also writes .txt (MRT) and .csv, then appends CANDIDATES HDU to .fits
 ```
@@ -198,7 +202,7 @@ the repo root.
 
 ## How the matching works
 
-Per shot, over `[mjd_shot − 60 s, mjd_shot + 1320 s + 60 s]`:
+Per shot, over `[mjd_shot − 60 s, mjd_shot + T_shot + 60 s]` where `T_shot = 3 × exptime + 240 s`:
 
 1. **Element selection** — nearest-epoch TLE per object for that night.
 2. **Coarse pass** — propagate all ~25k objects on a 20 s grid, keep anything
@@ -274,8 +278,28 @@ g_measured = g(550 km) + range_penalty + trail_dilution
 
 range_penalty  = 5   log10(range / 550 km)      = g_mag_inst - g_mag_inst_550km
 trail_dilution = 2.5 log10(exptime / t_cross)   = g_mag      - g_mag_inst
-t_cross        = seg_len / angular_rate
+t_cross        = fill * seg_len / angular_rate
+fill           = clip(area_arcsec2 / (seg_len * STREAK_WIDTH_ARCSEC), 0, 1)
 ```
+
+`STREAK_WIDTH_ARCSEC = 12.0` (the ±6″ SAT-mask flagging width). The fill
+fraction corrects for incomplete IFU coverage of the streak footprint: when only
+a fraction of the streak's geometric area (`seg_len × 12″`) is covered by IFU
+spaxels, the measured flux is proportionally lower, making `t_cross` shorter and
+`g_mag_inst` brighter. Median fill = 0.27, median magnitude shift ≈ −1.4 mag.
+
+Per-class median photometry (475 matched streaks):
+
+| class | n | gmag | ginst | rate | g(550 km) |
+|-------|---|------|-------|------|-----------|
+| LEO | 191 | 16.22 | 7.41 | 1232″/s | 5.91 |
+| MEO | 67 | 16.71 | 11.36 | 40″/s | 4.29 |
+| GEO | 99 | 16.74 | 12.98 | 15″/s | 3.86 |
+| HEO | 118 | 16.07 | 11.81 | 17″/s | 3.98 |
+
+Starlink (n=34): g(550 km) = 5.95 (16–84%: 5.23–6.94), consistent with
+Mallama's VisorSat V(550) = 5.92 ± 0.04. The ~1.2 mag discrepancy previously
+attributed to bandpass/phase effects was entirely the missing fill correction.
 
 **The two penalties oppose each other**, which is the whole reason HETDEX
 records high-orbit debris. At the median 666″ streak and 367 s exposure:
@@ -417,11 +441,14 @@ before treating them as identifications.
 `M.write_publication_table(CATALOG, OUT, out_base="HETDEX_PDR1_sats_ids")`
 (pipeline notebook §11) writes FITS, AAS machine-readable text and CSV.
 
-- **42 curated columns**, not the full join, each with a unit and a
+- **43 curated columns**, not the full join, each with a unit and a
   description — the MRT format requires descriptions, and they are what make
   the table usable by anyone else. Definitions in `M.PUB_COLUMNS`.
+- **Table HDU named `INFO`** — read with `Table.read(path, hdu="INFO")`.
+  MJD columns (`MJD`, `MJDx`, `MJDopen`, `MJDclos`) are kept as float64 to
+  avoid the ~338 s quantization that float32 introduces at MJD ~60000.
 - **Identification columns are masked where no match was found**, so unmatched
-  streaks read as blanks rather than `-1`. With ~17% unmatched, sentinels in a
+  streaks read as blanks rather than `-1`. With ~10% unmatched, sentinels in a
   published table are a real misreading risk.
 - Labels are ≤8 characters and booleans are cast to `int16`, both MRT
   constraints.
@@ -449,9 +476,13 @@ to/from the `INFO` table names:
 | `Length` | `seg_len_arcsec` | Observed segment length (arcsec) |
 | `PA` | `streak_pa` → published as `streak_pa_sph_deg` | Track position angle, E of N (deg) |
 | `gmag` | `g_mag` | SDSS-g AB magnitude |
-| `orbit_class` | `orbit_class` | LEO / MEO / GEO / HEO / Other |
-| `g_mag_inst` | `g_mag_inst` | Instantaneous (undiluted) magnitude |
+| `Class` | `orbit_class` | LEO / MEO / GEO / HEO / Other |
+| `ginst` | `g_mag_inst` | Instantaneous magnitude (area-corrected, uses fill fraction) |
 | `Rate` | `ang_rate_arcsec_s` | Angular rate (arcsec/s) |
+| `FWHM` | `fwhm_virus` | Seeing FWHM from VIRUS guider (arcsec) |
+| `Dither` | `expnum` | Dither number (1–3) in which streak was detected |
+| `MJDopen` | `dither_mjd_open` | MJD of shutter open for the streak dither (float64) |
+| `MJDclos` | `dither_mjd_close` | MJD of shutter close for the streak dither (float64) |
 | `IDsrc` | `id_source` | `spacetrack` or `satchecker` |
 
 **Note:** `PA` in older code refers to `streak_pa_sph_deg` in newer versions.
@@ -809,20 +840,13 @@ that may have diverged; patch the specific change, or diff first.
    is in `crossmatch/streak_counts_over_time.ipynb`. Key result: LEO rate rises ~20× from 2018
    to 2024 (real constellation growth); GEO variation is Poisson noise
    (r = 0.29, p = 0.35 vs cadence).
-3. ~~Verify `g_mag_inst`.~~ **Resolved 2026-08-13.** It was normalizing by the
-   per-row `exptime` catalog column (366.9–728.0 s), but Erin confirmed HETDEX
-   flux calibration is referenced to a fixed 360 s exposure regardless of the
-   actual dither length — `exptime` is shutter/overhead bookkeeping, not the
-   calibration basis. Fixed: `core.instantaneous_magnitude` now defaults to
-   `core.HETDEX_CAL_EXPTIME_S = 360.0`, and the `match_streaks.py` call site no
-   longer passes `exptime`. Shifts `g_mag_inst` by up to ~0.8 mag for the ~82
-   streaks with `exptime` far from 360 s; negligible near the median (367 s).
-   Does not change the LEO/GEO worked example below (both used median values
-   near 360 s already). **Still open: re-run §5 of the pipeline notebook** so
-   `HETDEX_PDR1_sats_matched.fits`, the publication table, and the magnitude
-   budget figures pick up the corrected values before they reach the paper —
-   the still-outstanding ~3 mag gap vs. Mallama's Starlink values was only
-   partly this effect and needs the post-fix numbers to assess.
+3. ~~Verify `g_mag_inst`.~~ **Fully resolved 2026-08-27.** Two fixes applied:
+   (a) Calibration basis: HETDEX flux calibration uses a fixed 360 s reference
+   (`core.HETDEX_CAL_EXPTIME_S = 360.0`), not the per-row `exptime`.
+   (b) Area-based IFU fill correction: `fill = area_arcsec2 / (seg_len * 12″)`,
+   capped at [0, 1], corrects for incomplete IFU coverage of the streak footprint
+   (`core.STREAK_WIDTH_ARCSEC = 12.0`). Median fill = 0.27, median brightness
+   shift ≈ −1.4 mag. Both fixes are in the current catalog.
 4. **Second pass with tighter cuts** (~`max_perp_arcsec=139`, `max_pa_deg=0.8`,
    from 10× median) — a ~50× reduction in chance area, retaining ~93%.
 5. **Inspect the 8 umbra matches** (`streak_id` 32, 82, 83, 149, 358, 362, 407,
@@ -847,8 +871,9 @@ that may have diverged; patch the specific change, or diff first.
     *Functions added outside this history* for what was lost and rebuilt, and
     why.
 12. ~~Re-run §5 for the 360 s calibration fix.~~ **Done.** The catalog,
-    publication table and figures were regenerated on 2026-08-18 with both the
-    calibration fix and the shot-span fix in place.
+    publication table and figures were regenerated on 2026-08-27 with the
+    calibration fix, shot-span fix, area-based fill correction, and precise
+    dither timing in place. Current count: 475/527 (90.1%).
 
 13. **`crossing_dt_s` distribution** — re-check now that the window is no
     longer truncated. Median moved 405 s → 426 s (16–84%: 146–1076 s). If it
@@ -865,6 +890,16 @@ that may have diverged; patch the specific change, or diff first.
     (402→48988, 403→54676 on night 60141). Left unmatched deliberately: those
     candidates came from a superseded pre-fix run and the current query does
     not propose them.
+
+16. ~~SatChecker validation moved to standalone notebook.~~ **Done 2026-08-27.**
+    `crossmatch/satchecker_validation.ipynb` — moved from the end of
+    `crossmatch_and_make_catalog.ipynb` for cleaner separation of concerns.
+
+17. ~~Precise dither timing in publication catalog.~~ **Done 2026-08-27.**
+    `MJDopen`/`MJDclos` (float64), `Dither` (expnum), `FWHM` (seeing) added
+    to the publication table. Timing sourced from `survey_hdr5.h5`
+    (`date` + `time` fields for sub-second precision) via
+    `M.load_survey_timing()` / `M.apply_survey_timing()`.
 
 ---
 

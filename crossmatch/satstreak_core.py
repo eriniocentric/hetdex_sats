@@ -456,20 +456,43 @@ def score_track(model_units, model_mjd, ra_start, dec_start, ra_end, dec_end,
 # ~0.8 mag for the ~82 streaks with exptime far from 360 s.
 HETDEX_CAL_EXPTIME_S = 360.0
 
+# Cross-track width of the satellite streak flagging region on the VIRUS
+# focal plane, in arcseconds.  Spaxels within 6 arcsec of the fitted track
+# are flagged, giving a 12 arcsec total width.  Used to convert measured
+# area to a fill fraction for the instantaneous-magnitude calculation:
+#   fill = area_arcsec2 / (seg_len_arcsec * STREAK_WIDTH_ARCSEC)
+STREAK_WIDTH_ARCSEC = 12.0
+
 
 def instantaneous_magnitude(g_mag, seg_len_arcsec, rate_arcsec_s,
-                            exptime_s=HETDEX_CAL_EXPTIME_S):
+                            exptime_s=HETDEX_CAL_EXPTIME_S,
+                            area_arcsec2=None,
+                            streak_width_arcsec=STREAK_WIDTH_ARCSEC):
     """Convert a trail-integrated magnitude to an instantaneous point-source
     magnitude.
 
     The catalog `g_mag` is synthesised from a spectrum calibrated as if the
     source shone for a fixed reference exposure -- **360 s for HETDEX,
     `HETDEX_CAL_EXPTIME_S`, not the per-row `exptime` catalog column** -- but
-    the satellite only illuminated the summed spaxels for
+    the satellite only illuminated the summed spaxels for ``t_cross`` seconds.
+
+    When ``area_arcsec2`` is provided and finite, the crossing time accounts
+    for incomplete IFU coverage along the streak::
+
+        fill = area_arcsec2 / (streak_width_arcsec * seg_len_arcsec)
+        t_cross = fill * seg_len_arcsec / rate_arcsec_s
+               = area_arcsec2 / (streak_width_arcsec * rate_arcsec_s)
+
+    ``streak_width_arcsec`` is a scalar constant (default 12 arcsec —
+    the flagging region extends ±6 arcsec from the fitted track).
+    When ``fill >= 1`` (single-IFU streaks or full coverage) the
+    result is identical to the geometric formula.
+
+    Without area information the original geometric formula is used::
 
         t_cross = seg_len_arcsec / rate_arcsec_s
 
-    seconds.  Hence
+    In either case::
 
         m_inst = g_mag + 2.5 * log10(t_cross / exptime)
 
@@ -479,7 +502,17 @@ def instantaneous_magnitude(g_mag, seg_len_arcsec, rate_arcsec_s,
     (e.g. for a non-HETDEX catalog reusing this function).
     """
     rate = np.asarray(rate_arcsec_s, float)
-    t_cross = np.asarray(seg_len_arcsec, float) / np.where(rate > 0, rate, np.nan)
+    safe_rate = np.where(rate > 0, rate, np.nan)
+    seg = np.asarray(seg_len_arcsec, float)
+
+    if area_arcsec2 is not None and np.isfinite(area_arcsec2):
+        # fill fraction: what fraction of the geometric streak has IFU coverage
+        fill = np.asarray(area_arcsec2, float) / (float(streak_width_arcsec) * seg)
+        fill = np.clip(fill, 0.0, 1.0)
+        t_cross = fill * seg / safe_rate
+    else:
+        t_cross = seg / safe_rate
+
     return np.asarray(g_mag, float) + 2.5 * np.log10(t_cross / float(exptime_s)), t_cross
 
 
