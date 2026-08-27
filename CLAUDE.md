@@ -135,6 +135,22 @@ reflected-sunlight events, not artefacts. Working interpretation: degraded
 endpoint astrometry in low-S/N extractions broadens the measured PA and
 perpendicular offset past the cuts, plus some genuinely uncatalogued objects.
 
+### SatChecker independent validation (2026-08-27)
+
+180 Space-Track identifications were cross-checked against the IAU CPS
+SatChecker API, which performs its own SGP4 propagation from an independent TLE
+archive. Of 166 resolved cases, 161 agree (**97.0%**, 95% Wilson CI:
+93.1–98.7%). 14 streaks returned no SatChecker match (pre-dating its archive or
+outside its catalog). 5 disagreements (streaks 407, 410, 445, 467, 498) — likely
+genuine ambiguity where two objects lie near the same track.
+
+SatChecker residuals for the 161 agreements: median perpendicular offset 12.6″
+(90th pct 74.1″), median PA difference 0.10° (90th pct 0.76°) — consistent
+with our own residuals (14.0″ / 0.08°).
+
+Results in `crossmatch/satchecker_validation.csv`; notebook is
+`crossmatch/satchecker_validation.ipynb`.
+
 ### The shot-span bug (fixed 2026-08-18)
 
 `MatchConfig.exposure_span_s` defaulted to a fixed **1320 s**. That is the real
@@ -880,11 +896,10 @@ that may have diverged; patch the specific change, or diff first.
     is still front-loaded relative to a uniform expectation, that is a real
     property of the dither timing rather than a search-window artefact.
 
-14. **Larger SatChecker validation.** The 97%/32-case figure in the paper is
-    small. `satchecker_crosscheck.py` without `--unmatched` validates matched
-    streaks; ~150 successes suffice (±2.8% at 97%). Run it against a
-    space-track-only snapshot so the check stays independent of the §5b merges.
-    The service times out heavily under load; retry with backoff.
+14. ~~Larger SatChecker validation.~~ **Done 2026-08-27.** 180 checked, 166
+    resolved, 161 agree (97.0%, 95% Wilson CI: 93.1–98.7%), 5 disagreements.
+    Run against a space-track-only snapshot (SatChecker merges excluded).
+    Results in `crossmatch/satchecker_validation.csv`.
 
 15. **Three streaks lack element sets** for their SatChecker-proposed NORADs
     (402→48988, 403→54676 on night 60141). Left unmatched deliberately: those

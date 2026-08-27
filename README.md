@@ -113,6 +113,13 @@ Median photometry per orbit class (area-corrected `ginst`):
 Starlink (n=34): g(550 km) = 5.95 (16–84%: 5.23–6.94), consistent with
 Mallama's VisorSat V(550) = 5.92 ± 0.04.
 
+**Independent validation (SatChecker).** 180 Space-Track identifications were
+cross-checked against the IAU CPS SatChecker API (independent SGP4 propagation
+from a separate TLE archive). Of 166 resolved cases, 161 agree (97.0%, 95%
+Wilson CI: 93.1–98.7%). 14 returned no SatChecker match; 5 disagreements.
+SatChecker residuals for the 161 agreements: median perpendicular offset 12.6″
+(90th pct 74.1″), median PA difference 0.10° (90th pct 0.76°).
+
 **Search window.** Each shot is searched over
 `[mjd_shot − 60 s, mjd_shot + T_shot + 60 s]` where
 `T_shot = 3 × exptime + 240 s` — three dithers plus ~4 min of overhead.
