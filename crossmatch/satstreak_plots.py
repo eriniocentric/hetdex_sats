@@ -1080,9 +1080,13 @@ def full_summary_panel(match, pub, catalog, smooth=5, figsize=None,
         g = np.asarray(pub["gmag"][oc_pub == cls], float)
         g_med = np.nanmedian(g[np.isfinite(g)]) if np.isfinite(g).any() else float("nan")
         g_str = f"{g_med:.1f}" if np.isfinite(g_med) else "--"
+        gi = np.asarray(pub["g_mag_inst"][oc_pub == cls], float)
+        gi_med = np.nanmedian(gi[np.isfinite(gi)]) if np.isfinite(gi).any() else float("nan")
+        gi_str = f"{gi_med:.1f}" if np.isfinite(gi_med) else "--"
         ax_sp.plot(wave, _smooth(f, smooth), lw=0.9, color=c,
                    label=f"{cls}  N\u2009=\u2009{n_streaks},  "
-                         f"$g_{{\\rm med}}$\u2009=\u2009{g_str}")
+                         f"$g_{{\\rm med}}$\u2009=\u2009{g_str},  "
+                         f"$g_{{\\rm inst,med}}$\u2009=\u2009{gi_str}")
         if e is not None and np.any(np.isfinite(e)):
             ax_sp.fill_between(wave,
                                _smooth(f - e, smooth), _smooth(f + e, smooth),
@@ -1093,6 +1097,10 @@ def full_summary_panel(match, pub, catalog, smooth=5, figsize=None,
     ax_sp.set_xlim(3500, 5500)
     ax_sp.legend(frameon=False, fontsize=7, ncol=2, loc="lower right")
     S.mark_fraunhofer(ax_sp)
+    ax_sp.annotate(
+        r"Median measured $g$ and $g_{\rm inst}$ values are given for each class.",
+        xy=(0.0, -0.13), xycoords="axes fraction",
+        fontsize=6, color="0.4", style="italic", va="top")
 
     # ------------------------------------------------------------ four panels
     oc = match["orbit_class"]
