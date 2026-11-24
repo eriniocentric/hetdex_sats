@@ -156,6 +156,14 @@ figcaption{font-size:13.5px;color:var(--muted);line-height:1.5;margin-top:8px;ma
 figcaption b{color:var(--ink);font-weight:600}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 
+.video-frame{position:relative;width:100%;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#0d1330;border:1px solid var(--line)}
+.video-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.video-card{display:flex;align-items:center;gap:18px;padding:18px 20px;border-radius:12px;border:1px solid var(--line);background:radial-gradient(120% 140% at 0% 0%,#24305f 0%,#10173a 70%);color:var(--ink);text-decoration:none}
+.video-card:hover{border-color:#4b5797;color:var(--ink)}
+.video-card .play{flex:none;width:54px;height:54px;border-radius:50%;background:var(--sun);display:grid;place-items:center}
+.video-card .play::before{content:"";margin-left:5px;border-left:17px solid #2a1a05;border-top:11px solid transparent;border-bottom:11px solid transparent}
+.video-card b{display:block;font-family:var(--display);font-weight:400;font-size:24px;line-height:1.15}
+.video-card span{font-size:14px;color:var(--muted)}
 /* verification styling */
 .card.gate{border-color:rgba(255,143,163,.45);background:linear-gradient(180deg,#1b1b3c 0%,var(--panel) 120px)}
 .card.gate::before{content:"VERIFICATION GATE";position:absolute;top:-10px;right:22px;font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;background:var(--gate);color:#2a0a14;padding:3px 9px;border-radius:999px;font-weight:500}
@@ -376,8 +384,12 @@ figcaption b{color:var(--ink);font-weight:600}
           <div class="tools"><span class="chip human"><i></i>Tutorials written by hand</span><span class="chip ai"><i></i>Claude in Jupyter AI</span><span class="chip code"><i></i>TACC JupyterHub</span></div>
           <p>From the PDR1 paper I wrote a series of twelve tutorial notebooks, <code>dexcube</code>, covering the data model, downloading cubes, masking options, collapsing cubes, extracting spectra and querying the catalog.</p>
           <p>From those tutorials I built a full LLM context (<code>HETDEX_CONTEXT.md</code> and <code>CLAUDE.md</code>): survey parameters, the cube format, every mask bit, data paths and the mistakes people commonly make. Users of our public JupyterHub can now ask Claude questions about HETDEX data and have it write code right inside the Jupyter AI environment. A Claude subscription is needed for this to work.</p>
+          <figure class="video">
+            <div class="video-frame"><iframe src="https://www.loom.com/embed/be1b841f268048979b05c5aa29a6a3dd?hide_owner=true&amp;hide_share=true" title="Jumpstart HETDEX Data Access with JupyterHub (Loom video)" loading="lazy" allow="fullscreen; picture-in-picture" allowfullscreen></iframe></div>
+            <figcaption><b>Demo: “Jumpstart HETDEX Data Access with JupyterHub.”</b> Logging in, finding the right datacubes with the IFU index, and asking Claude in Jupyter AI to extract spectra and build 3D views.</figcaption>
+          </figure>
           <div class="aside">This step is what made the rest fast. Once Claude knew how to read the cubes and their masks, measuring the satellites was a request, not a project.</div>
-          <div class="links"><a href="https://github.com/HETDEX/dexcube">HETDEX/dexcube on GitHub</a><a href="https://jupyter.tacc.cloud/">HETDEX JupyterHub at TACC</a><a href="https://www.loom.com/share/be1b841f268048979b05c5aa29a6a3dd">Video: Claude in Jupyter AI</a></div>
+          <div class="links"><a href="https://github.com/HETDEX/dexcube">HETDEX/dexcube on GitHub</a><a href="https://jupyter.tacc.cloud/">HETDEX JupyterHub at TACC</a><a href="https://www.loom.com/share/be1b841f268048979b05c5aa29a6a3dd">Watch on Loom</a></div>
         </article>
 
         <!-- ===================== PHASE 4 ===================== -->
